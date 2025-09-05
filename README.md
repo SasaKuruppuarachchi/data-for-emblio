@@ -7,7 +7,7 @@ Status: active; contents align with the processing scripts in `RAW/`.
 ## What’s here
 - Blackbird/ — pre-arranged sequences in Blackbird layout (train/eval/test by pattern: clover, egg, halfMoon, star, winter)
 - DIDO/ — sequences produced from raw HDF5 (see `RAW/process_dido.py`)
-- IIT-DRD/ — sequences produced from the FPV Drone Racing dataset (see `RAW/process_drd.py`)
+- IIT-DRD/ — sequences produced from the TII Drone Racing dataset (see `RAW/process_drd.py`)
 - EuRoC-Dataset/ — standard EuRoC MAV sequences with list files
 - PegasusDataset/ — vehicle IMU dataset in CSV form (train/test folders)
 - RAW/ — processing scripts and notes (`process_drd.py`, `process_dido.py`, `readme_process.md`)
@@ -31,7 +31,7 @@ Conventions
 ## Processing from raw sources
 Two helper scripts convert raw datasets into the above layout. See `RAW/readme_process.md` for details.
 
-1) Drone Racing Dataset (UZH FPV) → IIT‑DRD
+1) TII Drone Racing Dataset → IIT‑DRD
 - Script: `RAW/process_drd.py`
 - Input (example): `RAW/drone-racing-dataset/data/{autonomous|piloted}/flight-XX*/<flight>_500hz_freq_sync.csv`
 - Output root (default): `IIT-DRD/`
@@ -52,10 +52,10 @@ Example invocations (non‑destructive unless `--overwrite` is set) are document
     - Format: already in the target layout under `Blackbird/` (train/eval/test across patterns)
     - Original dataset: The Blackbird UAV dataset (MIT)
         - https://blackbird-dataset.mit.edu/
-- IIT‑DRD (converted from UZH FPV Drone Racing Dataset)
+- IIT‑DRD (converted from TII Drone Racing Dataset)
     - Produced by `process_drd.py` from 500 Hz synchronized CSVs
-    - Original dataset: UZH FPV Drone Racing Dataset
-        - https://fpv.ifi.uzh.ch/
+    - Original dataset source:
+        - TII Racing — Drone Racing Dataset: https://github.com/tii-racing/drone-racing-dataset
 - DIDO
     - Produced by `process_dido.py` from HDF5 logs in `RAW/DidoRaw/`
     - Original source: internal/author‑provided sequences; contact maintainers if you need access

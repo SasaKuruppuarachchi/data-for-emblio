@@ -33,7 +33,7 @@ Splits:
 Usage example:
   python process_drd.py \
     --data-root RAW/drone-racing-dataset/data \
-    --out-dir DRD \
+    --out-dir IIT-DRD \
     --overwrite --plots --no-plot-3d
 
 """

@@ -5,7 +5,7 @@ layout. Both scripts now share similar CLI options: split control via
 list files or random ratios, optional plotting, overwrite behavior, and a
 progress bar.
 
-## 1. Drone Racing Dataset (DRD) – `process_drd.py`
+## 1. TII Drone Racing Dataset – `process_drd.py`
 
 Input structure (example):
 ```
@@ -14,9 +14,13 @@ RAW/drone-racing-dataset/data/
   piloted/flight-YYp-.../flight-YYp-..._500hz_freq_sync.csv
 ```
 
+Source:
+- TII Racing — Drone Racing Dataset: https://github.com/tii-racing/drone-racing-dataset
+  - Tip: clone or symlink the repository under `RAW/drone-racing-dataset` so the defaults work.
+
 Generated output (example):
 ```
-DRD/
+IIT-DRD/
   train/flight-01a-ellipse/groundTruthPoses.csv
   train/flight-01a-ellipse/imu_data.csv
   train/flight-01a-ellipse/thrust_data.csv
@@ -38,7 +42,7 @@ nanoseconds; IMU timestamps are relative seconds starting at 0.
 
 Input structure (default data-root):
 ```
-<repo>/src/Datasets/RAW/DidoRaw/<sequence_dir>/data.hdf5
+RAW/DidoRaw/<sequence_dir>/data.hdf5
 ```
 
 HDF5 datasets expected:
@@ -51,7 +55,7 @@ HDF5 datasets expected:
 
 Generated output (example):
 ```
-DIDO/BlackbirdLike/
+DIDO/
   train/<pattern>/yawForward/<sequence>/groundTruthPoses.csv
   train/<pattern>/yawForward/<sequence>/imu_data.csv
   train/<pattern>/yawForward/<sequence>/thrust_data.csv
@@ -98,15 +102,15 @@ DRD conversion using existing split text files (auto-detect):
 ```
 python process_drd.py \
   --data-root RAW/drone-racing-dataset/data \
-  --out-dir DRD \
+  --out-dir IIT-DRD \
   --plots --overwrite
 ```
 
 DIDO conversion with random split & plots:
 ```
 python process_dido.py \
-  --data-root src/Datasets/RAW/DidoRaw \
-  --out-dir DIDO/BlackbirdLike \
+  --data-root RAW/DidoRaw \
+  --out-dir DIDO \
   --plots --split-ratios 0.6 0.2 0.2 --seed 7
 ```
 
@@ -127,5 +131,3 @@ Both scripts show a tqdm bar unless `--no-progress` is specified.
 - Optional parallelization of per-flight/sequence conversion.
 - Unified thrust timestamp convention (currently differs intentionally).
 - Additional metadata summaries (JSON) per split.
-
-"}
