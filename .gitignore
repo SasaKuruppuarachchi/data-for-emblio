@@ -1,0 +1,10 @@
+RAW/DidoRaw/
+RAW/drone-racing-dataset/
+.vscode/
+__pycache__/
+*.pyc
+*.pkl
+*.h5
+*.ckpt
+*.log
+*.png

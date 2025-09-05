@@ -1,0 +1,12 @@
+imu2car:
+  imu:
+    coordinate: FLU (Forward-Left-Up)
+  car:
+    coordinate: FRD (Forward-Right-Down)
+
+  rotation:
+    type: quaternion # quaternion (x, y, z, w)
+    value: [1.0, 0.0, 0.0, 0.0]
+
+
+  
