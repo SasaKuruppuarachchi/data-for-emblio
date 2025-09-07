@@ -66,8 +66,8 @@ DIDO/
 
 File semantics (differences vs DRD):
 - groundTruthPoses.csv identical column headers.
-- imu_data.csv timestamps: relative seconds (start at 0).
-- thrust_data.csv timestamps: relative seconds (start at 0) + thrust_1..4.
+- imu_data.csv timestamps: default absolute nanoseconds (use --imu-timestamp-mode relative_sec for relative seconds).
+- thrust_data.csv timestamps: default absolute nanoseconds (use --thrust-timestamp-mode relative_sec for relative seconds) + thrust_1..4.
 
 ## Split Handling (Both Scripts)
 Priority order:
@@ -94,6 +94,9 @@ Notes:
 --plot-name <name>       Plot filename (default differs: drd flight_trajectory.png, dido trajectory.png)
 --plot-dpi <int>         Plot DPI (default 120)
 --no-progress            Disable tqdm progress bar
+(DRD only) --imu-timestamp-mode {relative_sec,ns}  IMU timestamps as absolute nanoseconds (default) or relative seconds from start
+(DIDO only) --imu-timestamp-mode {relative_sec,ns}  Same meaning for DIDO sequences
+(DIDO only) --thrust-timestamp-mode {relative_sec,ns} Thrust timestamps absolute nanoseconds (default) or relative seconds
 (DIDO only) --plot-elev / --plot-azim for 3D view angles
 ```
 

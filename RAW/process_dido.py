@@ -181,10 +181,19 @@ def plot_processed_groundtruth(gt_csv: Path, out_path: Path, enable_3d: bool = T
 	return True
 
 
-def convert_sequence(seq_dir: Path, out_seq_dir: Path, overwrite: bool = False,
-					 plot: bool = True, plot3d: bool = True, plot_dpi: int = 120,
-					 plot_name: str = 'trajectory.png', plot_elev: float = 35.0,
-					 plot_azim: float = -60.0) -> None:
+def convert_sequence(
+	seq_dir: Path,
+	out_seq_dir: Path,
+	overwrite: bool = False,
+	plot: bool = True,
+	plot3d: bool = True,
+	plot_dpi: int = 120,
+	plot_name: str = 'trajectory.png',
+	plot_elev: float = 35.0,
+	plot_azim: float = -60.0,
+	imu_timestamp_mode: str = 'ns',
+	thrust_timestamp_mode: str = 'ns',
+) -> None:
 	h5file = seq_dir / 'data.hdf5'
 	if not h5file.exists():
 		safe_print(f"[WARN] Missing data.hdf5 in {seq_dir.name}, skipping")
@@ -226,36 +235,51 @@ def convert_sequence(seq_dir: Path, out_seq_dir: Path, overwrite: bool = False,
 		for t, p, q in zip(ts_ns_int, gt_p, gt_q):
 			writer.writerow([int(t), *[f"{v:.6f}" for v in p], *[f"{v:.6f}" for v in q]])
 
-	# imu_data.csv (# header, then timestamp(seconds float), acc(3), gyr(3))
+	# imu_data.csv
 	imu_path = out_seq_dir / 'imu_data.csv'
 	with imu_path.open('w', newline='') as fcsv:
 		writer = csv.writer(fcsv)
 		writer.writerow(['timestamp','accel_x','accel_y','accel_z','gyro_x','gyro_y','gyro_z'])
-		t0 = ts_seconds[0] if len(ts_seconds) else 0.0
-		for t, a, g in zip(ts_seconds, acc, gyr):
-			writer.writerow([f"{t - t0:.9f}", *[f"{v:.9f}" for v in a], *[f"{v:.9f}" for v in g]])
+		t0_sec = ts_seconds[0] if len(ts_seconds) else 0.0
+		if imu_timestamp_mode == 'relative_sec':
+			for t, a, g in zip(ts_seconds, acc, gyr):
+				writer.writerow([f"{t - t0_sec:.9f}", *[f"{v:.9f}" for v in a], *[f"{v:.9f}" for v in g]])
+		elif imu_timestamp_mode == 'ns':
+			for t_ns, a, g in zip(ts_ns_int, acc, gyr):
+				writer.writerow([str(int(t_ns)), *[f"{v:.9f}" for v in a], *[f"{v:.9f}" for v in g]])
+		else:
+			raise ValueError(f"Unknown imu_timestamp_mode {imu_timestamp_mode}")
 
 	# thrust_data.csv (# header, timestamp + thrust_1..thrust_4). If missing use zeros.
 	thrust_path = out_seq_dir / 'thrust_data.csv'
 	with thrust_path.open('w', newline='') as fcsv:
 		writer = csv.writer(fcsv)
 		writer.writerow(['timestamp','thrust_1','thrust_2','thrust_3','thrust_4'])
-		t0 = ts_seconds[0] if len(ts_seconds) else 0.0
+		t0_sec = ts_seconds[0] if len(ts_seconds) else 0.0
 		if meas_rpm is not None and meas_rpm.ndim == 2:
 			cols = meas_rpm.shape[1]
 		else:
 			cols = 0
+		# Helper to emit line based on mode
+		def emit(ts_idx: int, values):
+			if thrust_timestamp_mode == 'relative_sec':
+				t_rel = ts_seconds[ts_idx] - t0_sec
+				writer.writerow([f"{t_rel:.6f}", *values])
+			elif thrust_timestamp_mode == 'ns':
+				writer.writerow([str(int(ts_ns_int[ts_idx])), *values])
+			else:
+				raise ValueError(f"Unknown thrust_timestamp_mode {thrust_timestamp_mode}")
 		if cols >= 5:
 			motor = meas_rpm[:,1:5]
-			for t, m in zip(ts_seconds, motor):
-				writer.writerow([f"{t - t0:.6f}", *[f"{v:.9f}" for v in m]])
+			for i, m in enumerate(motor):
+				emit(i, [f"{v:.9f}" for v in m])
 		elif cols == 4:
-			for t, m in zip(ts_seconds, meas_rpm):
-				writer.writerow([f"{t - t0:.6f}", *[f"{v:.9f}" for v in m]])
+			for i, m in enumerate(meas_rpm):
+				emit(i, [f"{v:.9f}" for v in m])
 		else:
-			zero_row = ['0.0','0.0','0.0','0.0']
-			for t in ts_seconds:
-				writer.writerow([f"{t - t0:.6f}", *zero_row])
+			zero_vals = ['0.0','0.0','0.0','0.0']
+			for i in range(len(ts_seconds)):
+				emit(i, zero_vals)
 
 	# Plot (after CSV creation) using saved groundTruthPoses
 	if plot:
@@ -293,6 +317,10 @@ def main():
 	parser.add_argument('--plot-elev', type=float, default=35.0)
 	parser.add_argument('--plot-azim', type=float, default=-60.0)
 	parser.add_argument('--no-progress', action='store_true', help='Disable progress bar')
+	parser.add_argument('--imu-timestamp-mode', choices=['relative_sec','ns'], default='ns',
+					help='IMU timestamp column mode: absolute nanoseconds (default) or relative seconds from start')
+	parser.add_argument('--thrust-timestamp-mode', choices=['relative_sec','ns'], default='ns',
+					help='Thrust timestamp column mode: absolute nanoseconds (default) or relative seconds from start')
 	args = parser.parse_args()
 
 	data_root: Path = args.data_root
@@ -353,6 +381,8 @@ def main():
 			plot_name=args.plot_name,
 			plot_elev=args.plot_elev,
 			plot_azim=args.plot_azim,
+			imu_timestamp_mode=args.imu_timestamp_mode,
+			thrust_timestamp_mode=args.thrust_timestamp_mode,
 		)
 
 	safe_print("Done.")

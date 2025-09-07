@@ -3,6 +3,11 @@
 
 Convert the Drone Racing Dataset 500Hz synchronized flight CSV files
 (`*_500hz_freq_sync.csv`) into a Blackbird-style dataset layout:
+Convert the Drone Racing Dataset 500Hz synchronized flight CSV files
+("*_500hz_freq_sync.csv") into a Blackbird-style dataset layout.
+
+IMU timestamp mode (default: absolute nanoseconds 'ns') can be changed
+to relative seconds via --imu-timestamp-mode relative_sec.
 
 <out_dir>/
   train/<flight_name>/groundTruthPoses.csv
@@ -158,7 +163,16 @@ def plot_trajectory(xyz: np.ndarray, out_path: Path, title: str, enable_3d: bool
 
 # ---------------- Core conversion ---------------- #
 
-def convert_flight(flight: FlightMeta, out_dir: Path, overwrite: bool, make_plot: bool, plot_3d: bool, plot_name: str, plot_dpi: int) -> None:
+def convert_flight(
+    flight: FlightMeta,
+    out_dir: Path,
+    overwrite: bool,
+    make_plot: bool,
+    plot_3d: bool,
+    plot_name: str,
+    plot_dpi: int,
+    imu_timestamp_mode: str,
+) -> None:
     # Read header first
     with flight.csv_path.open('r', newline='') as f:
         reader = csv.reader(f)
@@ -214,13 +228,22 @@ def convert_flight(flight: FlightMeta, out_dir: Path, overwrite: bool, make_plot
         w.writerow(['timestamp','p_x','p_y','p_z','q_w','q_x','q_y','q_z'])
         for (ts,px,py,pz,qw,qx,qy,qz) in poses:
             w.writerow([ts, px, py, pz, qw, qx, qy, qz])
-    # Write imu_data.csv (timestamp in *seconds* float to match earlier convention)
+    # Write imu_data.csv
+    # Modes:
+    #  - relative_sec (default): (ts - first_ts)/1e9 as float seconds
+    #  - ns: absolute nanoseconds (int) matching groundTruthPoses / thrust_data
     t0_ns = timestamps_ns[0] if timestamps_ns else 0
     with imu_path.open('w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['timestamp','accel_x','accel_y','accel_z','gyro_x','gyro_y','gyro_z'])
-        for ts,(ax,ay,az),(gx,gy,gz) in zip(timestamps_ns, accel, gyro):
-            w.writerow([(ts - t0_ns) / 1e9, ax, ay, az, gx, gy, gz])
+        if imu_timestamp_mode == 'relative_sec':
+            for ts,(ax,ay,az),(gx,gy,gz) in zip(timestamps_ns, accel, gyro):
+                w.writerow([ (ts - t0_ns)/1e9, ax, ay, az, gx, gy, gz ])
+        elif imu_timestamp_mode == 'ns':
+            for ts,(ax,ay,az),(gx,gy,gz) in zip(timestamps_ns, accel, gyro):
+                w.writerow([ ts, ax, ay, az, gx, gy, gz ])
+        else:
+            raise ValueError(f"Unknown imu_timestamp_mode {imu_timestamp_mode}")
     # Write thrust_data.csv (timestamps in nanoseconds to align with groundTruthPoses)
     with thrust_path.open('w', newline='') as f:
         w = csv.writer(f)
@@ -265,6 +288,8 @@ def parse_args():
     p.add_argument('--plot-name', default='flight_trajectory.png')
     p.add_argument('--plot-dpi', type=int, default=120)
     p.add_argument('--no-progress', action='store_true', help='Disable progress bar')
+    p.add_argument('--imu-timestamp-mode', choices=['relative_sec','ns'], default='relative_sec',
+                       help='IMU timestamp column mode: absolute nanoseconds (default) or relative seconds from start')
     return p.parse_args()
 
 # Helper to auto-detect list files (train.txt, eval.txt, test.txt) located at data-root parent folder or within data-root
@@ -323,7 +348,16 @@ def main():
         if not meta:
             continue
         out_dir = args.out_dir / split_name / name
-        convert_flight(meta, out_dir, overwrite=args.overwrite, make_plot=args.plots, plot_3d=not args.no_plot_3d, plot_name=args.plot_name, plot_dpi=args.plot_dpi)
+        convert_flight(
+            meta,
+            out_dir,
+            overwrite=args.overwrite,
+            make_plot=args.plots,
+            plot_3d=not args.no_plot_3d,
+            plot_name=args.plot_name,
+            plot_dpi=args.plot_dpi,
+            imu_timestamp_mode=args.imu_timestamp_mode,
+        )
         processed += 1
 
     print(f"Done. Flights processed: {processed}")

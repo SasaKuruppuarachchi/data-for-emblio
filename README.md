@@ -26,7 +26,7 @@ Each sequence folder follows this minimal format:
 Conventions
 - Units: SI (m, s, rad, m/s^2)
 - World frame: ENU; body: x‑forward, y‑left, z‑up (as provided by source, harmonized where noted by scripts)
-- Timestamps: poses in nanoseconds; IMU timestamps are relative seconds from the first sample
+- Timestamps: poses & thrust in nanoseconds; IMU timestamps now default to nanoseconds (use `--imu-timestamp-mode relative_sec` to get relative seconds). DIDO converter also supports `--thrust-timestamp-mode`.
 
 ## Processing from raw sources
 Two helper scripts convert raw datasets into the above layout. See `RAW/readme_process.md` for details.
