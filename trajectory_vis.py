@@ -227,6 +227,8 @@ def parse_args():
 	p.add_argument('--gif-max-frames', type=int, default=400, help='Max frames (downsample if trajectory longer)')
 	p.add_argument('--gif-loop', type=int, default=0, help='GIF loop count (0=infinite)')
 	p.add_argument('--gif-opacity-tail', type=float, default=0.25, help='Opacity for past path (0-1)')
+	p.add_argument('--gif-t-start', type=float, default=None, help='Start time (seconds, relative to first timestamp) to begin GIF (inclusive)')
+	p.add_argument('--gif-t-end', type=float, default=None, help='End time (seconds, relative to first timestamp) to stop GIF (inclusive)')
 	p.add_argument('--gif-skip-3d', action='store_true', help='Do not include 3D even if --plots-3d set when generating GIF')
 	p.add_argument('--no-progress', action='store_true', help='Disable textual progress bar for GIF rendering')
 	# Axes drawing
@@ -240,18 +242,36 @@ def parse_args():
 def _make_gif(xyz: np.ndarray, quats: np.ndarray, ts: np.ndarray, out_file: Path, fps: int, max_frames: int, loop: int,
 	opacity_tail: float, axes_mode: str, axes_scale: float, axes_decimate: int,
 	enable_3d: bool, elev: float, azim: float, figsize_xy: Tuple[float,float], figsize_3d: Tuple[float,float],
-	show_progress: bool) -> bool:
+	show_progress: bool, t_start: float | None = None, t_end: float | None = None) -> bool:
 	if imageio is None:
 		print('[ERROR] imageio not available, cannot create GIF')
 		return False
 	n = len(xyz)
 	if n < 2:
 		return False
-	# Determine frame indices (evenly spaced)
+	# Determine frame indices (evenly spaced) over full range first
 	if n <= max_frames:
-		idxs = np.arange(n)
+		base_idxs = np.arange(n)
 	else:
-		idxs = np.linspace(0, n - 1, max_frames).astype(int)
+		base_idxs = np.linspace(0, n - 1, max_frames).astype(int)
+
+	# Time window filtering (convert provided seconds into same units as normalized seconds we derive later)
+	t0_raw = ts[0] if len(ts) else 0
+	divisor_probe = 1e9 if t0_raw > 1e12 else 1.0
+	if t_start is not None or t_end is not None:
+		# compute per-index seconds relative to start
+		sec_rel = (ts[base_idxs] - t0_raw) / divisor_probe
+		mask = np.ones_like(base_idxs, dtype=bool)
+		if t_start is not None:
+			mask &= sec_rel >= t_start - 1e-9
+		if t_end is not None:
+			mask &= sec_rel <= t_end + 1e-9
+		idxs = base_idxs[mask]
+		if len(idxs) == 0:
+			print('[WARN] Time window produced no frames; aborting GIF')
+			return False
+	else:
+		idxs = base_idxs
 	frames = []
 	# Precompute extents for stable axes
 	minx, maxx = np.min(xyz[:,0]), np.max(xyz[:,0])
@@ -386,7 +406,8 @@ def main():
 		out_file.parent.mkdir(parents=True, exist_ok=True)
 		gif_ok = _make_gif(xyz, quats, ts, out_file, args.gif_fps, args.gif_max_frames, args.gif_loop, args.gif_opacity_tail,
 					   args.axes_mode, args.axes_scale, args.axes_decimate, enable_3d and not args.gif_skip_3d,
-					   args.elev, args.azim, tuple(args.figsize_xy), tuple(args.figsize_3d), not args.no_progress)
+					   args.elev, args.azim, tuple(args.figsize_xy), tuple(args.figsize_3d), not args.no_progress,
+					   args.gif_t_start, args.gif_t_end)
 		if not gif_ok:
 			print('[ERROR] GIF generation failed')
 			sys.exit(5)

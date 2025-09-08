@@ -57,6 +57,8 @@ python trajectory_vis.py \
 | `--gif-loop INT` | GIF loop count (0 = infinite) | 0 |
 | `--gif-opacity-tail FLOAT` | Opacity (0–1) for earlier path as tail | 0.25 |
 | `--gif-skip-3d` | When GIF + 3D requested, skip 3D pane | off |
+| `--gif-t-start FLOAT` | Start time (s, relative to first pose timestamp) for GIF window | full start |
+| `--gif-t-end FLOAT` | End time (s, relative to first pose timestamp) for GIF window | full end |
 | `--axes-mode {none,start_end,decimate,all}` | Draw body axes strategy | none |
 | `--axes-scale FLOAT` | Axis length in meters | 0.2 |
 | `--axes-decimate INT` | Step interval for `decimate` mode | 25 |
@@ -75,6 +77,7 @@ Axes colors: X (red), Y (green), Z (blue).
 - Fixed XY and 3D axis ranges for stable framing across frames.
 - Title line shows elapsed time (seconds) and frame counter: `t=1.234s  |  Frame 10/120`.
 - Timestamp units auto-detected: if initial timestamp > 1e12 treated as nanoseconds → converted to seconds.
+- Optional time window selection using `--gif-t-start` / `--gif-t-end`; filtering is applied before frame downsampling by `--gif-max-frames`.
 
 ## Examples
 Minimal PNG with body axes:
@@ -112,11 +115,19 @@ python trajectory_vis.py \
   --gif --axes-mode all --axes-scale 0.15 --gif-max-frames 300
 ```
 
+Subset time window (first 2.5 seconds after 0.5s):
+```
+python trajectory_vis.py \
+  --sequence-path IIT-DRD/train/flight-02p-ellipse \
+  --gif --gif-t-start 0.5 --gif-t-end 3.0 --gif-fps 12 --axes-mode start_end
+```
+
 ## Performance Tips
 - Reduce `--gif-max-frames` for very long trajectories.
 - Use `--axes-mode decimate` with a larger `--axes-decimate` to keep rendering fast.
 - Lower `--dpi` for quicker GIF generation.
 - Avoid `--axes-mode all` on trajectories with thousands of poses unless necessary.
+- Narrow the time window with `--gif-t-start` / `--gif-t-end` to focus on segments and reduce frames processed.
 
 ## Troubleshooting
 | Symptom | Cause | Fix |
