@@ -80,9 +80,141 @@ def load_ground_truth(gt_path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray
 			np.asarray(quats, dtype=float))
 
 
+def load_imu(imu_path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+	"""Load imu_data.csv returning timestamps, accel (N,3), gyro (N,3).
+
+	Expected columns header containing: timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
+	Timestamp may be float seconds-from-start or integer nanoseconds.
+	Returns empty arrays on failure.
+	"""
+	if not imu_path or not imu_path.exists():
+		return np.empty((0,), dtype=float), np.empty((0,3)), np.empty((0,3))
+	ts_list: List[float] = []
+	acc_list: List[Tuple[float,float,float]] = []
+	gyr_list: List[Tuple[float,float,float]] = []
+	with imu_path.open('r', newline='') as f:
+		reader = csv.reader(f)
+		header = next(reader, None)
+		for row in reader:
+			if len(row) < 7:
+				continue
+			try:
+				ts_raw = row[0].strip()
+				if ts_raw.isdigit():
+					# nanoseconds integer string
+					ts_val = float(int(ts_raw))
+				else:
+					# assume float seconds
+					ts_val = float(ts_raw)
+				ax = float(row[1]); ay = float(row[2]); az = float(row[3])
+				gx = float(row[4]); gy = float(row[5]); gz = float(row[6])
+			except ValueError:
+				continue
+			ts_list.append(ts_val)
+			acc_list.append((ax,ay,az))
+			gyr_list.append((gx,gy,gz))
+	if not acc_list:
+		return np.empty((0,), dtype=float), np.empty((0,3)), np.empty((0,3))
+	return (np.asarray(ts_list, dtype=float),
+			np.asarray(acc_list, dtype=float),
+			np.asarray(gyr_list, dtype=float))
+
+def infer_imu_timestamp_mode(ts: np.ndarray) -> str:
+	"""Infer whether IMU timestamps are relative seconds or nanoseconds as float-int stored.
+
+	If all values very large (>1e12) treat as nanoseconds. Otherwise assume seconds.
+	"""
+	if ts.size == 0:
+		return 'relative_sec'
+	if np.median(ts) > 1e12:
+		return 'ns'
+	return 'relative_sec'
+
+def align_accel_with_gt(imu_ts: np.ndarray, acc: np.ndarray, gt_ts: np.ndarray, gt_quats: np.ndarray,
+						 timestamp_mode: str) -> Tuple[np.ndarray, np.ndarray]:
+	"""Interpolate/associate acceleration samples to ground-truth pose indices.
+
+	Returns (acc_world_no_g, valid_mask) where acc_world_no_g shape is (N,3).
+	If no IMU, returns zeros.
+	"""
+	N = gt_ts.shape[0]
+	if N == 0 or imu_ts.size == 0:
+		return np.zeros((N,3), dtype=float), np.zeros((N,), dtype=bool)
+	# Convert imu timestamps to nanoseconds if needed for alignment
+	if timestamp_mode == 'relative_sec':
+		# Reconstruct relative seconds to nanoseconds using gt start reference
+		gt0_ns = gt_ts[0]
+		imu_ts_ns = gt0_ns + (imu_ts * 1e9)
+	else:  # 'ns'
+		imu_ts_ns = imu_ts
+	# For each gt_ts, find nearest imu sample (binary search)
+	acc_out = np.zeros((N,3), dtype=float)
+	valid = np.zeros((N,), dtype=bool)
+	imu_ts_ns = imu_ts_ns.astype(np.int64)
+	for i, t in enumerate(gt_ts):
+		# np.searchsorted to find insertion
+		idx = np.searchsorted(imu_ts_ns, t)
+		candidates = []
+		if idx < imu_ts_ns.size:
+			candidates.append(idx)
+		if idx > 0:
+			candidates.append(idx-1)
+		if not candidates:
+			continue
+		# choose nearest in time
+		best = min(candidates, key=lambda k: abs(int(imu_ts_ns[k]) - int(t)))
+		acc_body = acc[best]
+		# Rotate body accel to world using quaternion
+		R = quat_to_rot(gt_quats[i])  # world_from_body
+		acc_world = R @ acc_body
+		acc_out[i] = acc_world
+		valid[i] = True
+	return acc_out, valid
+
+def gravity_correct(acc_world: np.ndarray, gravity_mag: float) -> np.ndarray:
+	"""Remove gravity from world-frame acceleration.
+
+	Assumes world Z axis is vertical. We auto-detect sign: if the median Z component
+	|median_z| is within [0.5*g, 1.5*g], we treat its sign as the gravity direction and subtract it.
+	Otherwise we assume accelerometer already had gravity removed and return unchanged.
+	"""
+	if acc_world.size == 0:
+		return acc_world
+	median_z = float(np.median(acc_world[:,2]))
+	if 0.5*gravity_mag < abs(median_z) < 1.5*gravity_mag:
+		g_vec = np.array([0.0, 0.0, np.sign(median_z)*gravity_mag])
+		return acc_world - g_vec
+	# fallback: previous incorrect assumption produced inflated values; no correction applied
+	return acc_world
+
+def _draw_accel_arrows_2d(ax, xyz: np.ndarray, acc_w_no_g: np.ndarray, mode: str, decimate: int, scale: float):
+	indices = list(_iter_axis_indices(len(xyz), mode, decimate))
+	for i in indices:
+		vec = acc_w_no_g[i]
+		if not np.isfinite(vec).all():
+			continue
+		base = xyz[i,:2]
+		arrow = vec[:2] * scale
+		end = base + arrow
+		ax.annotate('', xy=end, xytext=base, arrowprops=dict(arrowstyle='->', color='magenta', lw=1.6, alpha=0.85))
+
+def _draw_accel_arrows_3d(ax, xyz: np.ndarray, acc_w_no_g: np.ndarray, mode: str, decimate: int, scale: float):
+	indices = list(_iter_axis_indices(len(xyz), mode, decimate))
+	for i in indices:
+		vec = acc_w_no_g[i]
+		if not np.isfinite(vec).all():
+			continue
+		base = xyz[i]
+		end = base + vec * scale
+		ax.plot([base[0], end[0]],[base[1], end[1]],[base[2], end[2]], color='magenta', lw=1.5, alpha=0.85)
+
+
+
 def plot_trajectory(xyz: np.ndarray, quats: np.ndarray, out_file: Path, title: str, enable_3d: bool, dpi: int,
 					elev: float, azim: float, figsize_xy: Tuple[float,float], figsize_3d: Tuple[float,float],
-					axes_mode: str, axes_scale: float, axes_decimate: int) -> bool:
+					axes_mode: str, axes_scale: float, axes_decimate: int,
+					acc_mode: str='none', acc_decimate: int=40, acc_scale: float=0.4,
+					acc_world_no_g: np.ndarray | None = None) -> bool:
 	if xyz.size == 0:
 		return False
 	if enable_3d:
@@ -104,6 +236,8 @@ def plot_trajectory(xyz: np.ndarray, quats: np.ndarray, out_file: Path, title: s
 	ax_xy.legend(loc='best', fontsize=8)
 	if axes_mode != 'none':
 		_draw_axes_2d(ax_xy, xyz, quats, axes_mode, axes_scale, axes_decimate)
+	if acc_mode != 'none' and acc_world_no_g is not None and acc_world_no_g.shape[0] == xyz.shape[0]:
+		_draw_accel_arrows_2d(ax_xy, xyz, acc_world_no_g, acc_mode, acc_decimate, acc_scale)
 	if ax3d is not None:
 		ax3d.plot(xyz[:,0], xyz[:,1], xyz[:,2], lw=0.8, color='tab:orange')
 		ax3d.scatter([xyz[0,0]],[xyz[0,1]],[xyz[0,2]], c='green', s=18)
@@ -113,6 +247,8 @@ def plot_trajectory(xyz: np.ndarray, quats: np.ndarray, out_file: Path, title: s
 		ax3d.set_title('3D')
 		if axes_mode != 'none':
 			_draw_axes_3d(ax3d, xyz, quats, axes_mode, axes_scale, axes_decimate)
+		if acc_mode != 'none' and acc_world_no_g is not None and acc_world_no_g.shape[0] == xyz.shape[0]:
+			_draw_accel_arrows_3d(ax3d, xyz, acc_world_no_g, acc_mode, acc_decimate, acc_scale)
 	# Save figure
 	out_file.parent.mkdir(parents=True, exist_ok=True)
 	fig.tight_layout()
@@ -236,13 +372,23 @@ def parse_args():
 				   help='Draw body axes: none, start_end, decimate, all')
 	p.add_argument('--axes-scale', type=float, default=0.2, help='Axis length in meters')
 	p.add_argument('--axes-decimate', type=int, default=25, help='Step when mode=decimate')
+	# Acceleration (IMU) overlay options
+	p.add_argument('--accel-mode', choices=['none','start_end','decimate','all'], default='none',
+			   help='Draw gravity-corrected acceleration arrows (magenta) at poses using matching mode semantics')
+	p.add_argument('--accel-decimate', type=int, default=40, help='Step when accel-mode=decimate')
+	p.add_argument('--accel-scale', type=float, default=0.4, help='Scaling factor (visual meters per 1 m/s^2) for acceleration arrow length')
+	p.add_argument('--imu-file', type=Path, default=None, help='Optional explicit path to imu_data.csv (otherwise sequence-path/imu_data.csv)')
+	p.add_argument('--imu-timestamp-mode', choices=['auto','relative_sec','ns'], default='auto',
+			   help='Hint for interpreting imu timestamps when disambiguation is needed (auto tries to infer)')
+	p.add_argument('--imu-gravity', type=float, default=9.80665, help='Gravity magnitude assumed for correction (m/s^2)')
 	return p.parse_args()
 
 
 def _make_gif(xyz: np.ndarray, quats: np.ndarray, ts: np.ndarray, out_file: Path, fps: int, max_frames: int, loop: int,
 	opacity_tail: float, axes_mode: str, axes_scale: float, axes_decimate: int,
 	enable_3d: bool, elev: float, azim: float, figsize_xy: Tuple[float,float], figsize_3d: Tuple[float,float],
-	show_progress: bool, t_start: float | None = None, t_end: float | None = None) -> bool:
+	show_progress: bool, t_start: float | None = None, t_end: float | None = None,
+	acc_mode: str='none', acc_decimate: int=40, acc_scale: float=0.4, acc_world_no_g: np.ndarray | None = None) -> bool:
 	if imageio is None:
 		print('[ERROR] imageio not available, cannot create GIF')
 		return False
@@ -327,6 +473,8 @@ def _make_gif(xyz: np.ndarray, quats: np.ndarray, ts: np.ndarray, out_file: Path
 		# Axes for current frame only (lighter weight) if enabled
 		if axes_mode != 'none':
 			_draw_axes_2d(ax, xyz[:idx+1], quats[:idx+1], 'start_end' if axes_mode=='start_end' else ('decimate' if axes_mode=='decimate' else axes_mode), axes_scale, axes_decimate)
+		if acc_mode != 'none' and acc_world_no_g is not None:
+			_draw_accel_arrows_2d(ax, xyz[:idx+1], acc_world_no_g[:idx+1], 'start_end' if acc_mode=='start_end' else ('decimate' if acc_mode=='decimate' else acc_mode), acc_decimate, acc_scale)
 		ax.set_xlim(*fixed_xlim)
 		ax.set_ylim(*fixed_ylim)
 		ax.set_xlabel('x [m]'); ax.set_ylabel('y [m]')
@@ -344,6 +492,8 @@ def _make_gif(xyz: np.ndarray, quats: np.ndarray, ts: np.ndarray, out_file: Path
 			ax3d.scatter([xyz[idx,0]],[xyz[idx,1]],[xyz[idx,2]], c='red', s=18)
 			if axes_mode != 'none':
 				_draw_axes_3d(ax3d, xyz[:idx+1], quats[:idx+1], 'start_end' if axes_mode=='start_end' else ('decimate' if axes_mode=='decimate' else axes_mode), axes_scale, axes_decimate)
+			if acc_mode != 'none' and acc_world_no_g is not None:
+				_draw_accel_arrows_3d(ax3d, xyz[:idx+1], acc_world_no_g[:idx+1], 'start_end' if acc_mode=='start_end' else ('decimate' if acc_mode=='decimate' else acc_mode), acc_decimate, acc_scale)
 			ax3d.set_xlabel('x'); ax3d.set_ylabel('y'); ax3d.set_zlabel('z')
 			ax3d.view_init(elev=elev, azim=azim)
 			# Fixed ranges
@@ -390,6 +540,23 @@ def main():
 	if xyz.size == 0:
 		print(f"[ERROR] No valid pose rows in {gt_path}")
 		sys.exit(3)
+	# Optional IMU acceleration overlay
+	acc_world_no_g = None
+	if args.accel_mode != 'none':
+		imu_path = args.imu_file if args.imu_file else (seq_dir / 'imu_data.csv')
+		imu_ts_raw, acc_body, gyr = load_imu(imu_path)
+		if imu_ts_raw.size == 0:
+			print(f"[WARN] Acceleration overlay requested but no IMU data at {imu_path}")
+		else:
+			mode = args.imu_timestamp_mode
+			if mode == 'auto':
+				mode = infer_imu_timestamp_mode(imu_ts_raw)
+			acc_w, valid_mask = align_accel_with_gt(imu_ts_raw, acc_body, ts, quats, mode)
+			if valid_mask.any():
+				# gravity correction
+				acc_world_no_g = gravity_correct(acc_w, args.imu_gravity)
+			else:
+				print('[WARN] No valid IMU associations for acceleration overlay')
 	title = args.title if args.title else seq_dir.name
 	out_base = args.name if args.name else seq_dir.name
 	# Decide default out dir: if gif requested and out-dir not explicitly set by user (heuristic: value is default) use trajectory_gif
@@ -405,9 +572,10 @@ def main():
 		# Always ensure output dir exists
 		out_file.parent.mkdir(parents=True, exist_ok=True)
 		gif_ok = _make_gif(xyz, quats, ts, out_file, args.gif_fps, args.gif_max_frames, args.gif_loop, args.gif_opacity_tail,
-					   args.axes_mode, args.axes_scale, args.axes_decimate, enable_3d and not args.gif_skip_3d,
-					   args.elev, args.azim, tuple(args.figsize_xy), tuple(args.figsize_3d), not args.no_progress,
-					   args.gif_t_start, args.gif_t_end)
+				   args.axes_mode, args.axes_scale, args.axes_decimate, enable_3d and not args.gif_skip_3d,
+				   args.elev, args.azim, tuple(args.figsize_xy), tuple(args.figsize_3d), not args.no_progress,
+				   args.gif_t_start, args.gif_t_end,
+				   acc_mode=args.accel_mode, acc_decimate=args.accel_decimate, acc_scale=args.accel_scale, acc_world_no_g=acc_world_no_g)
 		if not gif_ok:
 			print('[ERROR] GIF generation failed')
 			sys.exit(5)
@@ -415,7 +583,8 @@ def main():
 		# Also optionally emit a static PNG if user wants (implicit when plots-3d or no-3d set?) -> skip for simplicity unless separately requested
 	else:
 		ok = plot_trajectory(xyz, quats, out_file, title, enable_3d, args.dpi, args.elev, args.azim,
-						 tuple(args.figsize_xy), tuple(args.figsize_3d), args.axes_mode, args.axes_scale, args.axes_decimate)
+				 tuple(args.figsize_xy), tuple(args.figsize_3d), args.axes_mode, args.axes_scale, args.axes_decimate,
+				 acc_mode=args.accel_mode, acc_decimate=args.accel_decimate, acc_scale=args.accel_scale, acc_world_no_g=acc_world_no_g)
 		if not ok:
 			print("[ERROR] Plot failed (empty trajectory)")
 			sys.exit(4)

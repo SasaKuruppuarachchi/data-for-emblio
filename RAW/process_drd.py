@@ -6,8 +6,10 @@ Convert the Drone Racing Dataset 500Hz synchronized flight CSV files
 Convert the Drone Racing Dataset 500Hz synchronized flight CSV files
 ("*_500hz_freq_sync.csv") into a Blackbird-style dataset layout.
 
-IMU timestamp mode (default: absolute nanoseconds 'ns') can be changed
-to relative seconds via --imu-timestamp-mode relative_sec.
+IMU & thrust timestamp outputs now use seconds (float). Ground truth
+timestamps are kept in microseconds (integer). The previous 'ns' option
+name is retained for CLI backward compatibility but now means absolute
+seconds instead of nanoseconds.
 
 <out_dir>/
   train/<flight_name>/groundTruthPoses.csv
@@ -20,7 +22,7 @@ Also saves a trajectory plot (XY + optional small 3D oblique) beside the
 CSV outputs (flight_trajectory.png by default) unless disabled.
 
 Mapping (from 500Hz CSV header):
-  timestamp (microseconds) -> nanoseconds ( * 1000 )
+    timestamp (microseconds) -> groundTruthPoses timestamp_us (unchanged)
   accel_[x|y|z] -> imu linear acceleration (m/s^2)
   gyro_[x|y|z]  -> imu angular velocity (rad/s)
   thrust[0-3]   -> motor normalized thrust values (0..1) (kept as-is)
@@ -185,11 +187,12 @@ def convert_flight(
             if r not in col_idx:
                 raise ValueError(f"Missing required column {r} in {flight.csv_path}")
         # Collect rows
-        timestamps_ns: List[int] = []
+        timestamps_us: List[int] = []  # original microseconds
+        timestamps_s: List[float] = []  # derived float seconds (absolute)
         accel: List[Tuple[float,float,float]] = []
         gyro: List[Tuple[float,float,float]] = []
         thrusts: List[Tuple[float,float,float,float]] = []
-        poses: List[Tuple[int,float,float,float,float,float,float,float,float,float]] = []  # (ts_ns, px,py,pz, qw,qx,qy,qz)
+        poses: List[Tuple[int,float,float,float,float,float,float,float,float,float]] = []  # (ts_us, px,py,pz, qw,qx,qy,qz)
         pos_accum: List[Tuple[float,float,float]] = []
         for row in reader:
             if not row:
@@ -198,7 +201,8 @@ def convert_flight(
                 ts_us = int(row[col_idx['timestamp']])
             except ValueError:
                 continue
-            ts_ns = ts_us * 1000  # microseconds -> nanoseconds
+            # Keep microseconds for ground truth; derive seconds float
+            ts_ns = ts_us * 1000  # retained only temporarily if needed elsewhere
             ax = float(row[col_idx['accel_x']]); ay = float(row[col_idx['accel_y']]); az = float(row[col_idx['accel_z']])
             gx = float(row[col_idx['gyro_x']]); gy = float(row[col_idx['gyro_y']]); gz = float(row[col_idx['gyro_z']])
             t0 = float(row[col_idx['thrust[0]']]); t1 = float(row[col_idx['thrust[1]']]); t2 = float(row[col_idx['thrust[2]']]); t3 = float(row[col_idx['thrust[3]']])
@@ -209,11 +213,12 @@ def convert_flight(
                 [float(row[col_idx['drone_rot[6]']]), float(row[col_idx['drone_rot[7]']]), float(row[col_idx['drone_rot[8]']])],
             ])
             qw,qx,qy,qz = rotmat_to_quat(R)
-            timestamps_ns.append(ts_ns)
+            timestamps_us.append(ts_us)
+            timestamps_s.append(ts_us / 1e6)
             accel.append((ax,ay,az))
             gyro.append((gx,gy,gz))
             thrusts.append((t0,t1,t2,t3))
-            poses.append((ts_ns, px,py,pz, qw,qx,qy,qz))
+            poses.append((ts_us, px,py,pz, qw,qx,qy,qz))
             pos_accum.append((px,py,pz))
     # Prepare output folder
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -222,34 +227,34 @@ def convert_flight(
     thrust_path = out_dir / 'thrust_data.csv'
     if not overwrite and (gt_path.exists() or imu_path.exists() or thrust_path.exists()):
         return
-    # Write groundTruthPoses.csv
+    # Write groundTruthPoses.csv (timestamp microseconds)
     with gt_path.open('w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['timestamp','p_x','p_y','p_z','q_w','q_x','q_y','q_z'])
+        #w.writerow(['timestamp','p_x','p_y','p_z','q_w','q_x','q_y','q_z'])
         for (ts,px,py,pz,qw,qx,qy,qz) in poses:
             w.writerow([ts, px, py, pz, qw, qx, qy, qz])
     # Write imu_data.csv
     # Modes:
-    #  - relative_sec (default): (ts - first_ts)/1e9 as float seconds
-    #  - ns: absolute nanoseconds (int) matching groundTruthPoses / thrust_data
-    t0_ns = timestamps_ns[0] if timestamps_ns else 0
+    #  - relative_sec: (t - first_t) seconds
+    #  - ns (legacy name): absolute seconds
+    t0_s = timestamps_s[0] if timestamps_s else 0.0
     with imu_path.open('w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['timestamp','accel_x','accel_y','accel_z','gyro_x','gyro_y','gyro_z'])
+        w.writerow(['# timestamp','accel_x','accel_y','accel_z','gyro_x','gyro_y','gyro_z'])
         if imu_timestamp_mode == 'relative_sec':
-            for ts,(ax,ay,az),(gx,gy,gz) in zip(timestamps_ns, accel, gyro):
-                w.writerow([ (ts - t0_ns)/1e9, ax, ay, az, gx, gy, gz ])
-        elif imu_timestamp_mode == 'ns':
-            for ts,(ax,ay,az),(gx,gy,gz) in zip(timestamps_ns, accel, gyro):
-                w.writerow([ ts, ax, ay, az, gx, gy, gz ])
+            for ts_s,(ax,ay,az),(gx,gy,gz) in zip(timestamps_s, accel, gyro):
+                w.writerow([ ts_s - t0_s, ax, ay, az, gx, gy, gz ])
+        elif imu_timestamp_mode == 'ns':  # absolute seconds
+            for ts_s,(ax,ay,az),(gx,gy,gz) in zip(timestamps_s, accel, gyro):
+                w.writerow([ ts_s, ax, ay, az, gx, gy, gz ])
         else:
             raise ValueError(f"Unknown imu_timestamp_mode {imu_timestamp_mode}")
-    # Write thrust_data.csv (timestamps in nanoseconds to align with groundTruthPoses)
+    # Write thrust_data.csv (seconds; always absolute seconds to match imu absolute option)
     with thrust_path.open('w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['timestamp','motor0','motor1','motor2','motor3'])
-        for ts,(m0,m1,m2,m3) in zip(timestamps_ns, thrusts):
-            w.writerow([ts, m0, m1, m2, m3])
+        w.writerow(['# timestamp','motor0','motor1','motor2','motor3'])  # seconds
+        for ts_s,(m0,m1,m2,m3) in zip(timestamps_s, thrusts):
+            w.writerow([ts_s, m0, m1, m2, m3])
     # Plot
     if make_plot and pos_accum:
         xyz = np.array(pos_accum, dtype=float)
@@ -288,8 +293,8 @@ def parse_args():
     p.add_argument('--plot-name', default='flight_trajectory.png')
     p.add_argument('--plot-dpi', type=int, default=120)
     p.add_argument('--no-progress', action='store_true', help='Disable progress bar')
-    p.add_argument('--imu-timestamp-mode', choices=['relative_sec','ns'], default='relative_sec',
-                       help='IMU timestamp column mode: absolute nanoseconds (default) or relative seconds from start')
+    p.add_argument('--imu-timestamp-mode', choices=['relative_sec','ns'], default='ns',
+                       help='IMU timestamp column mode: absolute seconds ("ns" legacy label) or relative seconds from start')
     return p.parse_args()
 
 # Helper to auto-detect list files (train.txt, eval.txt, test.txt) located at data-root parent folder or within data-root

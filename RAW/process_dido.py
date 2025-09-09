@@ -21,9 +21,9 @@ Mapping assumptions:
 			gt_p (N,3) position (m)
 			gt_q (N,4) quaternion (w,x,y,z)
 			meas_rpm (N,>=5) first column time-like (ignored) next 4 columns → thrust_1..4 (fallback zeros otherwise)
-	- groundTruthPoses.csv columns: timestamp_ns(int), p_x,y,z, q_w,q_x,q_y,q_z
-	- imu_data.csv columns: timestamp_sec(float, start=0), acc_x,y,z, gyro_x,y,z
-	- thrust_data.csv columns: timestamp_sec(float, start=0), thrust_1..4
+    - groundTruthPoses.csv columns: timestamp_us(int), p_x,y,z, q_w,q_x,q_y,q_z
+	- imu_data.csv columns: timestamp_s(float, start=0), acc_x,y,z, gyro_x,y,z
+	- thrust_data.csv columns: timestamp_s(float, start=0), thrust_1..4
 
 Splits:
 	- If explicit list files supplied via --train-list/--eval-list/--test-list they are used.
@@ -218,55 +218,55 @@ def convert_sequence(
 
 	scale = detect_timestamp_scale(ts)
 	if scale == 's':
-		ts_seconds = ts
+		ts_seconds = np.round(ts, 6)  # limit to 6 decimal places (microsecond resolution)
 		ts_ns_int = (ts * 1e9).astype(np.int64)
 	elif scale == 'us':
 		ts_seconds = ts / 1e6
 		ts_ns_int = (ts * 1e3).astype(np.int64)
 	else:
-		ts_seconds = ts / 1e9
+		ts_seconds = (ts//1e-3) / 1e6
 		ts_ns_int = ts.astype(np.int64)
 
-	# groundTruthPoses.csv (timestamp_ns, pos_x, pos_y, pos_z, quat_w, quat_x, quat_y, quat_z)
+	# groundTruthPoses.csv now uses microseconds (timestamp_us) instead of nanoseconds.
 	gt_pose_path = out_seq_dir / 'groundTruthPoses.csv'
 	with gt_pose_path.open('w', newline='') as fcsv:
 		writer = csv.writer(fcsv)
-		writer.writerow(['timestamp','p_x','p_y','p_z','q_w','q_x','q_y','q_z'])
+		#writer.writerow(['timestamp','p_x','p_y','p_z','q_w','q_x','q_y','q_z'])  # timestamp in microseconds
+		# Convert ns -> us by // 1e3
 		for t, p, q in zip(ts_ns_int, gt_p, gt_q):
-			writer.writerow([int(t), *[f"{v:.6f}" for v in p], *[f"{v:.6f}" for v in q]])
+			writer.writerow([int(t // 1000), *[f"{v:.6f}" for v in p], *[f"{v:.6f}" for v in q]])
 
-	# imu_data.csv
+	# imu_data.csv now always outputs timestamps in seconds (float). If relative_sec selected, start=0.
 	imu_path = out_seq_dir / 'imu_data.csv'
 	with imu_path.open('w', newline='') as fcsv:
 		writer = csv.writer(fcsv)
-		writer.writerow(['timestamp','accel_x','accel_y','accel_z','gyro_x','gyro_y','gyro_z'])
+		writer.writerow(['# timestamp','accel_x','accel_y','accel_z','gyro_x','gyro_y','gyro_z'])  # timestamp in seconds
 		t0_sec = ts_seconds[0] if len(ts_seconds) else 0.0
 		if imu_timestamp_mode == 'relative_sec':
 			for t, a, g in zip(ts_seconds, acc, gyr):
 				writer.writerow([f"{t - t0_sec:.9f}", *[f"{v:.9f}" for v in a], *[f"{v:.9f}" for v in g]])
-		elif imu_timestamp_mode == 'ns':
-			for t_ns, a, g in zip(ts_ns_int, acc, gyr):
-				writer.writerow([str(int(t_ns)), *[f"{v:.9f}" for v in a], *[f"{v:.9f}" for v in g]])
+		elif imu_timestamp_mode == 'ns':  # interpret previous 'ns' mode as absolute seconds output now
+			for t, a, g in zip(ts_seconds, acc, gyr):
+				writer.writerow([f"{t:.6f}", *[f"{v:.9f}" for v in a], *[f"{v:.9f}" for v in g]])
 		else:
 			raise ValueError(f"Unknown imu_timestamp_mode {imu_timestamp_mode}")
 
-	# thrust_data.csv (# header, timestamp + thrust_1..thrust_4). If missing use zeros.
+	# thrust_data.csv now outputs timestamps in seconds (float). If relative_sec selected, start=0.
 	thrust_path = out_seq_dir / 'thrust_data.csv'
 	with thrust_path.open('w', newline='') as fcsv:
 		writer = csv.writer(fcsv)
-		writer.writerow(['timestamp','thrust_1','thrust_2','thrust_3','thrust_4'])
+		writer.writerow(['# timestamp','thrust_1','thrust_2','thrust_3','thrust_4'])  # timestamp in seconds
 		t0_sec = ts_seconds[0] if len(ts_seconds) else 0.0
 		if meas_rpm is not None and meas_rpm.ndim == 2:
 			cols = meas_rpm.shape[1]
 		else:
 			cols = 0
-		# Helper to emit line based on mode
 		def emit(ts_idx: int, values):
 			if thrust_timestamp_mode == 'relative_sec':
 				t_rel = ts_seconds[ts_idx] - t0_sec
 				writer.writerow([f"{t_rel:.6f}", *values])
-			elif thrust_timestamp_mode == 'ns':
-				writer.writerow([str(int(ts_ns_int[ts_idx])), *values])
+			elif thrust_timestamp_mode == 'ns':  # reuse option name; now absolute seconds
+				writer.writerow([f"{ts_seconds[ts_idx]:.6f}", *values])
 			else:
 				raise ValueError(f"Unknown thrust_timestamp_mode {thrust_timestamp_mode}")
 		if cols >= 5:
@@ -318,9 +318,9 @@ def main():
 	parser.add_argument('--plot-azim', type=float, default=-60.0)
 	parser.add_argument('--no-progress', action='store_true', help='Disable progress bar')
 	parser.add_argument('--imu-timestamp-mode', choices=['relative_sec','ns'], default='ns',
-					help='IMU timestamp column mode: absolute nanoseconds (default) or relative seconds from start')
+				help='IMU timestamp column mode: absolute seconds ("ns" legacy label) or relative seconds from start')
 	parser.add_argument('--thrust-timestamp-mode', choices=['relative_sec','ns'], default='ns',
-					help='Thrust timestamp column mode: absolute nanoseconds (default) or relative seconds from start')
+				help='Thrust timestamp column mode: absolute seconds ("ns" legacy label) or relative seconds from start')
 	args = parser.parse_args()
 
 	data_root: Path = args.data_root

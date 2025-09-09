@@ -62,6 +62,12 @@ python trajectory_vis.py \
 | `--axes-mode {none,start_end,decimate,all}` | Draw body axes strategy | none |
 | `--axes-scale FLOAT` | Axis length in meters | 0.2 |
 | `--axes-decimate INT` | Step interval for `decimate` mode | 25 |
+| `--accel-mode {none,start_end,decimate,all}` | Draw gravity-corrected acceleration arrows (magenta) | none |
+| `--accel-decimate INT` | Step for accel-mode=decimate | 40 |
+| `--accel-scale FLOAT` | Visual scale (meters per 1 m/s^2) | 0.4 |
+| `--imu-file PATH` | Override path to `imu_data.csv` | sequence-path/imu_data.csv |
+| `--imu-timestamp-mode {auto,relative_sec,ns}` | Force/override IMU timestamp interpretation | auto |
+| `--imu-gravity FLOAT` | Gravity magnitude for correction (m/s^2) | 9.80665 |
 
 ## Axes Modes
 - `none` – No body axes.
@@ -106,6 +112,22 @@ Full trajectory GIF with 3D and start/end axes only:
 python trajectory_vis.py \
   --sequence-path IIT-DRD/train/flight-02p-ellipse \
   --gif --plots-3d --axes-mode start_end --axes-scale 0.5 --gif-fps 12
+```
+
+Acceleration overlay (start & end, gravity-corrected):
+```
+python trajectory_vis.py \
+  --sequence-path IIT-DRD/train/flight-02p-ellipse \
+  --accel-mode start_end --accel-scale 0.5
+```
+
+Decimated acceleration + axes in GIF:
+```
+python trajectory_vis.py \
+  --sequence-path IIT-DRD/train/flight-02p-ellipse \
+  --gif --plots-3d \
+  --axes-mode decimate --axes-decimate 60 --axes-scale 0.4 \
+  --accel-mode decimate --accel-decimate 30 --accel-scale 0.6
 ```
 
 All poses axes GIF (may be heavy):

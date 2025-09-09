@@ -1,5 +1,6 @@
 RAW/DidoRaw/
 RAW/drone-racing-dataset/
+RAW/SubT-MRS/
 .vscode/
 __pycache__/
 *.pyc
@@ -9,3 +10,4 @@ __pycache__/
 *.log
 *.png
 *.gif
+*.zip
