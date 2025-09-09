@@ -218,7 +218,7 @@ def convert_sequence(
 
 	scale = detect_timestamp_scale(ts)
 	if scale == 's':
-		ts_seconds = np.round(ts, 6)  # limit to 6 decimal places (microsecond resolution)
+		ts_seconds = np.trunc(ts * 1e6) / 1e6  # truncate to 6 decimal places (microsecond resolution)
 		ts_ns_int = (ts * 1e9).astype(np.int64)
 	elif scale == 'us':
 		ts_seconds = ts / 1e6
